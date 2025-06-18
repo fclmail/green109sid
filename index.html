@@ -1,0 +1,329 @@
+<!DOCTYPE html>  
+<html lang="en">  
+<head>  
+  <meta charset="UTF-8" />  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>  
+  <title>DODO Flash Loan Arbitrage</title>  
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>  
+  <style>  
+    body { background-color: #0a0; color: white; font-family: sans-serif; padding: 20px; }  
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }  
+    th, td { padding: 8px 12px; border: 1px solid #444; text-align: center; }  
+    .profitable { background-color: #00ff00; color: black; font-weight: bold; }  
+    #log { max-height: 200px; overflow-y: auto; border: 1px solid #444; margin-top: 10px; padding: 10px; background: #111; }  
+    button { padding: 8px 16px; margin: 5px; background: #333; color: white; border: none; border-radius: 4px; cursor: pointer; }  
+    button:hover { background: #555; }  
+  </style>  
+</head>  
+<body>  
+  <h1>DODO Flash Loan Arbitrage</h1>  
+  <p><strong>Wallet:</strong> <span id="wallet"></span></p>  
+  <p><strong>Wallet USDC Balance:</strong> <span id="walletBalance">-</span></p>  
+  <p><strong>Contract USDC Balance:</strong> <span id="contractBalance">-</span></p>  
+  <button id="connectWallet">Connect Wallet</button>  
+  <button id="scanNow">Scan Now</button>  
+  <label><input type="checkbox" id="autoTradeToggle"> Auto Trade</label>  
+  <label>Min Profit %: <input type="number" id="minProfitPct" value="0.2" step="0.1" min="0.1">%</label>  
+  <label>Trade Amount: <input type="number" id="tradeAmount" value="10" min="1"> USDC</label>  
+  <table id="resultTable">  
+    <thead>  
+      <tr>  
+        <th>Token</th>  
+        <th>Buy Router</th>  
+        <th>Sell Router</th>  
+        <th>Buy Price</th>  
+        <th>Sell Price</th>  
+        <th>Profit $</th>  
+        <th>Profit %</th>  
+        <th>Status</th>  
+        <th>Action</th>  
+      </tr>  
+    </thead>  
+    <tbody id="results"></tbody>  
+  </table>  
+  <div id="log"></div>  
+  <script>  
+    const contractAddress = "0x6aAF0234f3F3346013639E720165F33FF758b8a7";  
+    const contractABI = [  
+      {  
+        "inputs": [  
+          {"internalType": "address", "name": "_buyRouter", "type": "address"},  
+          {"internalType": "address", "name": "_sellRouter", "type": "address"},  
+          {"internalType": "address", "name": "_token", "type": "address"},  
+          {"internalType": "uint256", "name": "_amountIn", "type": "uint256"},  
+          {"internalType": "bool", "name": "_isToken0", "type": "bool"},  
+          {"internalType": "string", "name": "_flashLoanProvider", "type": "string"}  
+        ],  
+        "name": "executeArbitrage",  
+        "outputs": [],  
+        "stateMutability": "nonpayable",  
+        "type": "function"  
+      },  
+      {  
+        "inputs": [],  
+        "name": "withdrawProfits",  
+        "outputs": [],  
+        "stateMutability": "nonpayable",  
+        "type": "function"  
+      },  
+      {  
+        "inputs": [],  
+        "name": "getContractBalance",  
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],  
+        "stateMutability": "view",  
+        "type": "function"  
+      }  
+    ];  
+    
+    const tokens = {  
+      WETH: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",  
+      DAI: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063", g
+      WBTC: "0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6",
+      UNI: "0xb33eaad8d922b1083446dc23f610c2567fb5180f",
+      USDC: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+      DAI: "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063",
+      GMT: "0x714DB550b574b3E927af3D93E26127D15721D4C2",  
+      GRT: "0x5fe2B58c013d7601147DcdD68C143A77499f5531",  
+      IPMB: "0xFF22c94FFb6bB5d1DF18bEb5fd1dFE7583D3B214",  
+      LDO: "0xC3C7d422809852031b44ab29EEC9F1EfF2A58756",  
+      LINK: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39",  
+      MANA: "0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4",  
+      MASK: "0x2B9E7ccDF0F4e5B24757c1E1a80e311E34Cb10c7",  
+      MATIC: "0x0000000000000000000000000000000000001010",  
+      MKR: "0x6f7C932e7684666C9fd1d44527765433e01fF61d",  
+      MOCA: "0xf944e35f95e819e752f3ccb5faf40957d311e8c5",  
+      NEXO: "0x41b3966B4FF7b427969ddf5da3627d6AEAE9a48E",  
+      OM: "0xC3Ec80343D2bae2F8E680FDADDe7C17E71E114ea",  
+      PMT: "0x971327539Fc22B84887EF964529E2555cBD0fe97",  
+      QUICK: "0x831753dd7087cac61ab5644b308642cc1c33dc13",  
+      RETH: "0x0266F4F08D82372CF0FcbCCc0Ff74309089c74d1",  
+      RNDR: "0x61299774020dA444Af134c82fa83E3810b309991",  
+      ROUTE: "0x16eccfdbb4ee1a85a33f3a9b21175cd7ae753db4",  
+      RPL: "0x7205705771547cF79201111B4bd8aaF29467b9eC",  
+      SAND: "0xBbba073C31bF03b8ACf7c28EF0738DeCF3695683",  
+      SFRXETH: "0x6d1FdBB266fCc09A16a22016369210A15bb95761",  
+      SNX: "0x50B728D8D964fd00C2d0AAD81718b71311feF68a",  
+      SOL: "0x7DfF46370e9eA5f0Bad3C4E29711aD50062EA7A4",  
+      SUPER: "0xa1428174F516F527fafdD146b883bB4428682737",  
+      SUSHI: "0x0b3f868e0be5597d5db7feb59e1cadbb0fdda50a",  
+      TEL: "0xdf7837de1f2fa4631d716cf2502f8b230f1dcc32",  
+      TUT: "0x0493D38CA81bD42cE0eEAC5Db220231dD836f0ad",  
+      USDT: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",  
+      WETH: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",  
+      WOO: "0x1B815d120B3eF02039Ee11dC2d33DE7aA4a8C603",  
+      XSGD: "0xdc3326e71d45186f113a2f448984ca0e8d201995",  
+      ZRO: "0x6985884C4392D348587B19cb9eAAf157F13271cd",
+      USDT: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",
+      SHIB: "0x6f8a06447ff6fcf75d803135a7de15ce88c1d4ec",
+      CRV: "0x172370d5cd63279efa6d502dab29171933a610af",
+      LINK: "0x53e0bca35ec356bd5dddfebbd1fc0fd03fabad39",
+      WETH: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",
+      WBTC: "0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6",  
+      SHIB: "0x6f8A06447ff6fcf75A5fCdb3f8c4BAb2da4fC0D0",  
+      UNI: "0xb33EaAd8d922B1083446DC23f610c2567fB5180f"  
+    };  
+    
+    const routers = {  
+      QuickSwap: "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff",  
+      SushiSwap: "0x1b02da8cb0d097eb8d57a175b88c7d8b47997506",  
+      Dfyn: "0xA8b607Aa09B6A2641cF6F90f643E76d3f6e6Ff73",  
+      ApeSwap: "0xC0788A3aD43d79aa53B09c2EaCc313A787d1d607"  
+    };  
+
+    let provider, signer, contract, walletAddress;  
+    let isScanning = false;  
+    let scanInterval;  
+
+    // Initialize the app  
+    window.addEventListener('load', function() {  
+      document.getElementById('connectWallet').addEventListener('click', connectWallet);  
+      document.getElementById('scanNow').addEventListener('click', manualScan);  
+    });  
+
+    async function connectWallet() {  
+      try {  
+        if (!window.ethereum) {  
+          throw new Error("MetaMask or other Web3 provider not found");  
+        }  
+        
+        provider = new ethers.providers.Web3Provider(window.ethereum);  
+        await provider.send("eth_requestAccounts", []);  
+        signer = provider.getSigner();  
+        walletAddress = await signer.getAddress();  
+        
+        document.getElementById("wallet").textContent = walletAddress;  
+        contract = new ethers.Contract(contractAddress, contractABI, signer);  
+        
+        updateBalances();  
+        startAutoScan();  
+        
+        log("Wallet connected successfully");  
+      } catch (error) {  
+        log(`⚠️ Wallet connection failed: ${error.message}`);  
+      }  
+    }  
+
+    async function updateBalances() {  
+      try {  
+        const usdc = new ethers.Contract(  
+          "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",  
+          ["function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)"],  
+          provider  
+        );  
+        
+        const decimals = await usdc.decimals();  
+        const balance = await usdc.balanceOf(walletAddress);  
+        document.getElementById("walletBalance").textContent = (balance / (10 ** decimals)).toFixed(5);  
+
+        const contractBal = await usdc.balanceOf(contractAddress);  
+        document.getElementById("contractBalance").textContent = (contractBal / (10 ** decimals)).toFixed(5);  
+      } catch (error) {  
+        log(`⚠️ Balance update failed: ${error.message}`);  
+      }  
+    }  
+
+    function startAutoScan() {  
+      if (scanInterval) {  
+        clearInterval(scanInterval);  
+      }  
+      scanInterval = setInterval(() => {  
+        if (!isScanning) {  
+          scanAndArbitrage();  
+        }  
+      }, 30000); // Scan every 30 seconds  
+    }  
+
+    async function manualScan() {  
+      if (isScanning) {  
+        log("Scan already in progress");  
+        return;  
+      }  
+      await scanAndArbitrage();  
+    }  
+
+    async function scanAndArbitrage() {  
+      if (!walletAddress) {  
+        log("Please connect your wallet first");  
+        return;  
+      }  
+
+      isScanning = true;  
+      document.getElementById("results").innerHTML = "";  
+      log("Starting arbitrage scan...");  
+      
+      try {  
+        const minProfitPct = parseFloat(document.getElementById("minProfitPct").value);  
+        const tradeAmount = parseFloat(document.getElementById("tradeAmount").value);  
+        const amountIn = ethers.utils.parseUnits(tradeAmount.toString(), 6); // USDC has 6 decimals  
+
+        for (const [symbol, token] of Object.entries(tokens)) {  
+          for (const [buyName, buyRouter] of Object.entries(routers)) {  
+            for (const [sellName, sellRouter] of Object.entries(routers)) {  
+              if (buyName === sellName) continue;  
+              
+              try {  
+                const buyOut = await getAmountOut(buyRouter, token, amountIn);  
+                const sellOut = await getAmountOut(sellRouter, token, amountIn);  
+
+                const buyPrice = Number(ethers.utils.formatUnits(amountIn, 6)) / Number(ethers.utils.formatUnits(buyOut, 18));  
+                const sellPrice = Number(ethers.utils.formatUnits(amountIn, 6)) / Number(ethers.utils.formatUnits(sellOut, 18));  
+
+                const profit = sellPrice - buyPrice;  
+                const profitPct = (profit / buyPrice) * 100;  
+
+                const row = document.createElement("tr");  
+                if (profitPct > minProfitPct) row.classList.add("profitable");  
+                
+                // Create action button for profitable trades  
+                const actionCell = document.createElement("td");  
+                if (profitPct > minProfitPct) {  
+                  const tradeBtn = document.createElement("button");  
+                  tradeBtn.textContent = "Trade";  
+                  tradeBtn.onclick = () => executeTrade(buyRouter, sellRouter, token, amountIn, symbol, profitPct);  
+                  actionCell.appendChild(tradeBtn);  
+                }  
+
+                row.innerHTML = `  
+                  <td>${symbol}</td>  
+                  <td>${buyName}</td>  
+                  <td>${sellName}</td>  
+                  <td>${buyPrice.toFixed(6)}</td>  
+                  <td>${sellPrice.toFixed(6)}</td>  
+                  <td>${profit.toFixed(6)}</td>  
+                  <td>${profitPct.toFixed(2)}%</td>  
+                  <td>${profitPct > minProfitPct ? '🚨 Arbitrage' : '❌ Skip'}</td>  
+                `;  
+                row.appendChild(actionCell);  
+                document.getElementById("results").appendChild(row);  
+
+                // Auto-trade if enabled and profitable  
+                if (profitPct > minProfitPct && document.getElementById("autoTradeToggle").checked) {  
+                  await executeTrade(buyRouter, sellRouter, token, amountIn, symbol, profitPct);  
+                }  
+              } catch (e) {  
+                log(`⚠️ ${symbol} ${buyName} → ${sellName} failed: ${e.message}`);  
+              }  
+            }  
+          }  
+        }  
+      } catch (error) {  
+        log(`⚠️ Scan failed: ${error.message}`);  
+      } finally {  
+        isScanning = false;  
+        updateBalances();  
+        log("Scan completed");  
+      }  
+    }  
+
+    async function executeTrade(buyRouter, sellRouter, token, amountIn, symbol, profitPct) {  
+      try {  
+        log(`⚡ Executing arbitrage for ${symbol} (${profitPct.toFixed(2)}%)...`);  
+        
+        const tx = await contract.executeArbitrage(  
+          buyRouter,  
+          sellRouter,  
+          token,  
+          amountIn,  
+          true, // isToken0 (USDC is token0 in most pairs)  
+          "DODO", // flash loan provider  
+          { gasLimit: 1000000 } // Increased gas limit  
+        );  
+        
+        log(`Transaction sent: ${tx.hash}`);  
+        const receipt = await tx.wait();  
+        log(`✅ Arbitrage successful! Tx: ${receipt.transactionHash}`);  
+        
+        // Withdraw profits after successful arbitrage  
+        const withdrawTx = await contract.withdrawProfits();  
+        await withdrawTx.wait();  
+        log("💰 Profits withdrawn to your wallet");  
+        
+        updateBalances();  
+      } catch (error) {  
+        log(`⚠️ Arbitrage failed for ${symbol}: ${error.message}`);  
+      }  
+    }  
+
+    async function getAmountOut(router, token, amountIn) {  
+      try {  
+        const routerContract = new ethers.Contract(  
+          router,  
+          ["function getAmountsOut(uint amountIn, address[] memory path) view returns (uint[] memory)"],  
+          provider  
+        );  
+        
+        const path = ["0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", token]; // USDC to token  
+        const amounts = await routerContract.getAmountsOut(amountIn, path);  
+        return amounts[1];  
+      } catch (error) {  
+        throw new Error(`Router query failed: ${error.message}`);  
+      }  
+    }  
+
+    function log(msg) {  
+      const logDiv = document.getElementById("log");  
+      logDiv.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}<br>` + logDiv.innerHTML;  
+    }  
+  </script>  
+</body>  
+</html>
